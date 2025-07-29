@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vietnamese Speech-to-Text</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(59, 130, 246, 0.3);
+            border-radius: 50%;
+            border-top-color: #3b82f6;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .file-drop-area {
+            border: 2px dashed #d1d5db;
+            transition: all 0.3s ease;
+        }
+        
+        .file-drop-area.drag-over {
+            border-color: #3b82f6;
+            background-color: rgba(59, 130, 246, 0.05);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">
+                <i class="fas fa-microphone text-blue-500 mr-3"></i>
+                Vietnamese Speech-to-Text
+            </h1>
+            <p class="text-gray-600">Chuyển đổi âm thanh tiếng Việt thành văn bản</p>
+        </div>
+
+        <!-- Model Status -->
+        <div id="modelStatus" class="mb-6 p-4 rounded-lg">
+            {% if model_loaded %}
+            <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded flex items-center">
+                <i class="fas fa-check-circle mr-2"></i>
+                <span>Model đã sẵn sàng</span>
+            </div>
+            {% else %}
+            <div class="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded flex items-center">
+                <div class="loading mr-2"></div>
+                <span>Đang tải model, vui lòng đợi...</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Upload Area -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div id="uploadArea" class="file-drop-area p-8 rounded-lg text-center cursor-pointer">
+                <div id="uploadContent">
+                    <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-4"></i>
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Tải lên file âm thanh</h3>
+                    <p class="text-gray-500 mb-4">Kéo thả file hoặc click để chọn</p>
+                    <p class="text-sm text-gray-400">Hỗ trợ: MP3, WAV, FLAC, M4A, OGG, WMA (tối đa 100MB)</p>
+                </div>
+                <input type="file" id="fileInput" class="hidden" accept=".mp3,.wav,.flac,.m4a,.ogg,.wma">
+            </div>
+            
+            <div id="uploadProgress" class="hidden mt-4">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm text-gray-600">Đang xử lý...</span>
+                    <span class="text-sm text-gray-600" id="progressText">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2">
+                    <div id="progressBar" class="bg-blue-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Area -->
+        <div id="resultsArea" class="hidden bg-white rounded-lg shadow-lg p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                <i class="fas fa-file-text text-blue-500 mr-2"></i>
+                Kết quả chuyển đổi
+            </h2>
+            
+            <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                <div class="flex justify-between items-start mb-2">
+                    <span class="text-sm text-gray-600">File: <span id="fileName" class="font-medium"></span></span>
+                    <button id="copyBtn" class="text-blue-500 hover:text-blue-700 text-sm flex items-center">
+                        <i class="fas fa-copy mr-1"></i>
+                        Sao chép
+                    </button>
+                </div>
+                <div id="transcriptionResult" class="text-gray-800 leading-relaxed whitespace-pre-wrap"></div>
+            </div>
+            
+            <button id="newTranscription" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors">
+                <i class="fas fa-plus mr-2"></i>
+                Tải file mới
+            </button>
+        </div>
+
+        <!-- Error Area -->
+        <div id="errorArea" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
+            <div class="flex items-center">
+                <i class="fas fa-exclamation-triangle mr-2"></i>
+                <span id="errorMessage"></span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadProgress = document.getElementById('uploadProgress');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const resultsArea = document.getElementById('resultsArea');
+        const errorArea = document.getElementById('errorArea');
+        const transcriptionResult = document.getElementById('transcriptionResult');
+        const fileName = document.getElementById('fileName');
+        const copyBtn = document.getElementById('copyBtn');
+        const newTranscriptionBtn = document.getElementById('newTranscription');
+        const modelStatus = document.getElementById('modelStatus');
+
+        // Check model status periodically
+        function checkModelStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.model_loaded) {
+                        modelStatus.innerHTML = `
+                            <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded flex items-center">
+                                <i class="fas fa-check-circle mr-2"></i>
+                                <span>Model đã sẵn sàng (${data.device})</span>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(console.error);
+        }
+
+        // Check status every 3 seconds if model not loaded
+        {% if not model_loaded %}
+        const statusInterval = setInterval(() => {
+            checkModelStatus();
+        }, 3000);
+        {% endif %}
+
+        // File upload handlers
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', handleDragOver);
+        uploadArea.addEventListener('dragleave', handleDragLeave);
+        uploadArea.addEventListener('drop', handleDrop);
+        fileInput.addEventListener('change', handleFileSelect);
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processFile(files[0]);
+            }
+        }
+
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) {
+                processFile(file);
+            }
+        }
+
+        function processFile(file) {
+            hideError();
+            showProgress();
+            
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // Simulate progress
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += Math.random() * 15;
+                if (progress > 90) progress = 90;
+                updateProgress(progress);
+            }, 500);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                clearInterval(progressInterval);
+                updateProgress(100);
+                
+                setTimeout(() => {
+                    hideProgress();
+                    
+                    if (data.success) {
+                        showResults(data.transcription, data.filename);
+                    } else {
+                        showError(data.error || 'Có lỗi xảy ra khi xử lý file');
+                    }
+                }, 500);
+            })
+            .catch(error => {
+                clearInterval(progressInterval);
+                hideProgress();
+                showError('Lỗi kết nối: ' + error.message);
+            });
+        }
+
+        function showProgress() {
+            uploadProgress.classList.remove('hidden');
+            resultsArea.classList.add('hidden');
+        }
+
+        function hideProgress() {
+            uploadProgress.classList.add('hidden');
+        }
+
+        function updateProgress(percent) {
+            progressBar.style.width = percent + '%';
+            progressText.textContent = Math.round(percent) + '%';
+        }
+
+        function showResults(transcription, filename) {
+            transcriptionResult.textContent = transcription;
+            fileName.textContent = filename;
+            resultsArea.classList.remove('hidden');
+            resultsArea.classList.add('fade-in');
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            errorArea.classList.remove('hidden');
+        }
+
+        function hideError() {
+            errorArea.classList.add('hidden');
+        }
+
+        // Copy to clipboard
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(transcriptionResult.textContent)
+                .then(() => {
+                    copyBtn.innerHTML = '<i class="fas fa-check mr-1"></i>Đã sao chép';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = '<i class="fas fa-copy mr-1"></i>Sao chép';
+                    }, 2000);
+                })
+                .catch(() => {
+                    showError('Không thể sao chép văn bản');
+                });
+        });
+
+        // New transcription
+        newTranscriptionBtn.addEventListener('click', () => {
+            resultsArea.classList.add('hidden');
+            hideError();
+            fileInput.value = '';
+        });
+    </script>
+</body>
+</html>
